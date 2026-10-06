@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+
+# git internals / rewrite scratch (never commit)
+.git-rewrite/
+.git-filter-repo-*/
+*.orig
+
+# Editor / tooling
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+
+# Local-only unredacted output from scripts/show_names.py - NEVER commit this.
+# That output contains the computer name, serial number, network addresses and
+# process names. Keep it outside the repo entirely if you can.
+local/
+*.local.md
+*.local.txt
+names-*.*
