@@ -1,6 +1,6 @@
 # MyComputerStatus
 
-A daily health log for this MacBook Air — battery wear, RAM pressure, thermal state, disk
+A daily health log for my MacBook Air — battery wear, RAM pressure, thermal state, disk
 headroom, and anything abnormal (kernel panics, memory-pressure kills, crash reports).
 
 One markdown snapshot per day in [`daily/`](daily/), plus a machine-readable row per day in
@@ -11,7 +11,7 @@ One markdown snapshot per day in [`daily/`](daily/), plus a machine-readable row
 > Only generic hardware facts are published. **No computer name, no network addresses, no serial
 > number and no software / process names** appear anywhere in this repository — see
 > [Privacy](#privacy).
-
+> Users can change this repo accordingly if they want to establish name, addresses, and so on.
 ---
 
 ## What gets recorded
