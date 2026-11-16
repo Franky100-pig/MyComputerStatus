@@ -13,5 +13,12 @@ USED_PCT=$(echo "scale=1; ($A+$W+$C)*$PG*100/$TOT" | bc)
 USED_GB=$(echo "scale=2; ($A+$W+$C)*$PG/1073741824" | bc)
 COMP_GB=$(echo "scale=2; $C*$PG/1073741824" | bc)
 SWAP=$(sysctl -n vm.swapusage | awk -F'used = ' '{print $2}' | awk '{print $1}' | tr -d 'M')
-[ -f "$OUT" ] || echo "epoch,iso,used_gb,used_pct,compressor_gb,swap_mb" > "$OUT"
-printf '%s,%s,%s,%s,%s,%s\n' "$(date +%s)" "$(date '+%Y-%m-%dT%H:%M:%S')" "$USED_GB" "$USED_PCT" "$COMP_GB" "$SWAP" >> "$OUT"
+# Cumulative flow counters. Stored as raw since-boot totals: differencing two
+# rows 24 h apart is the only way to get an interval delta, because macOS keeps
+# no per-day page-in/out history.
+n() { echo "$VM" | awk -F: -v k="$1" '$1 ~ k {gsub(/[ .]/,"",$2); print $2; exit}'; }
+PAGEINS=$(n 'Pageins'); PAGEOUTS=$(n 'Pageouts')
+SWAPINS=$(n 'Swapins'); SWAPOUTS=$(n 'Swapouts')
+[ -f "$OUT" ] || echo "epoch,iso,used_gb,used_pct,compressor_gb,swap_mb,pageins,pageouts,swapins,swapouts" > "$OUT"
+printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$(date +%s)" "$(date '+%Y-%m-%dT%H:%M:%S')" "$USED_GB" "$USED_PCT" "$COMP_GB" "$SWAP" \
+  "$PAGEINS" "$PAGEOUTS" "$SWAPINS" "$SWAPOUTS" >> "$OUT"
