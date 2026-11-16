@@ -94,7 +94,10 @@ kv PANIC_FILES "$PANICS"
 # never print them. Classification (which app / which category) is done by hand
 # in the daily report, with the name genericised.
 kv JETSAM_24H "$(find /Library/Logs/DiagnosticReports -name 'JetsamEvent-*.ips' -mtime -1 2>/dev/null | wc -l | tr -d ' ')"
-kv DIAG_24H "$(find /Library/Logs/DiagnosticReports -maxdepth 1 -name '*.diag' -mtime -1 2>/dev/null | wc -l | tr -d ' ')"
+# `.diag` files are also written to the PER-USER store, which is a different
+# directory and is populated even when the system-wide store is absent. Count
+# both, or a burst of failed sysdiagnose attempts reads as zero.
+kv DIAG_24H "$( { find /Library/Logs/DiagnosticReports ~/Library/Logs/DiagnosticReports -maxdepth 1 -name '*.diag' -mtime -1 2>/dev/null; } | wc -l | tr -d ' ')"
 
 # ---- Process names: NEVER collected ----
 # The keys are emitted empty so the CSV schema stays stable. Per-process detail
