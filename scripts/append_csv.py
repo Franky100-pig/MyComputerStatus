@@ -18,6 +18,11 @@ COLUMNS = [
     "battery_pct", "battery_cycles", "battery_maxcap_pct", "battery_cond", "battery_temp_c",
     "disk_used_gb", "disk_used_pct", "disk_free_gb", "ssd_smart",
     "thermal_warning", "panics", "jetsam_24h", "top_cpu", "top_mem",
+    # Charging behaviour over the interval, from scripts/collect_charging.py.
+    # Appended rather than inserted so the 23 leading columns keep their positions
+    # and every pre-2026-11-17 row stays parseable (its new cells are simply blank).
+    "ac_plugs", "charge_sessions", "topoff_pct", "batt_floor_pct",
+    "charge_rate_max", "time_ac_h", "time_batt_h", "charger_bounces",
 ]
 
 # KEY=VALUE name  ->  CSV column
@@ -32,6 +37,10 @@ MAP = {
     "SSD_SMART": "ssd_smart", "THERMAL_WARNING": "thermal_warning",
     "PANIC_FILES": "panics", "JETSAM_24H": "jetsam_24h",
     "TOP_CPU": "top_cpu", "TOP_MEM": "top_mem",
+    "AC_PLUGS": "ac_plugs", "CHARGE_SESSIONS": "charge_sessions",
+    "TOPOFF_PCT": "topoff_pct", "BATT_FLOOR_PCT": "batt_floor_pct",
+    "CHARGE_RATE_MAX": "charge_rate_max", "TIME_AC_H": "time_ac_h",
+    "TIME_BATT_H": "time_batt_h", "CHARGER_BOUNCES": "charger_bounces",
 }
 
 
