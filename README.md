@@ -24,8 +24,7 @@ One markdown snapshot per day in [`daily/`](daily/), plus a machine-readable row
 | Load average, core count | `sysctl vm.loadavg`, `hw.ncpu` |
 | Thermal throttling warnings | `pmset -g therm` |
 | Disk usage, SSD SMART status | `df`, `diskutil info disk0` |
-| Anomalies: kernel panics, Jetsam events | `/Library/Logs/DiagnosticReports/` (counted, never named) |
-| Top CPU / memory processes | **never recorded** — see [Privacy](#privacy) |
+| Anomalies: kernel panics, Jetsam events | `/Library/Logs/DiagnosticReports/` (counted, never named) || Top CPU / memory processes | **never recorded** — see [Privacy](#privacy) |
 
 ## Layout
 
@@ -122,7 +121,7 @@ honest record of "not measured" rather than a fabricated zero.
 |---|---|
 | `ac_plugs` | Times the charger was connected in the interval |
 | `charge_sessions` | Charge sessions that reached `Charging Completed` |
-| `topoff_pct` | Highest charge reached — the ceiling in practice |
+| `topoff_pct` | Highest charge **observed in the interval** — usually the ceiling a session reached, but on a day spent on battery it is simply the charge carried in from the previous day |
 | `batt_floor_pct` | Lowest charge reached |
 | `charge_rate_max` | Fastest ramp in one session, percentage points per hour |
 | `time_ac_h` | Hours on AC |
@@ -132,6 +131,15 @@ honest record of "not measured" rather than a fabricated zero.
 `time_ac_h + time_batt_h` should equal the report interval. When run without
 `--since`/`--until` the script covers the trailing 24 hours at run time, so it can differ from
 the report interval by a few minutes; pass both flags to make the arithmetic exact.
+
+### `DIAG_24H` counts analytics payloads, not failures
+
+`.diag` files are not only failed `sysdiagnose` attempts. The per-user diagnostics store also
+receives `bug_type 226` health/telemetry summaries, which macOS writes **in a burst of six to
+ten files a few seconds after each wake** — expected, benign, and periodic. Because `collect.sh`
+can sample mid-burst, the same wake can read as 2 or as 8 depending on which second it was
+taken. Treat `DIAG_24H` as "diagnostic payload files touched in the last 24 h", not as an
+anomaly counter; real incidents are visible as panics and as `killing_*` records in the log.
 
 ## Privacy
 
