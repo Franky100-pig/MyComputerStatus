@@ -132,6 +132,16 @@ honest record of "not measured" rather than a fabricated zero.
 `--since`/`--until` the script covers the trailing 24 hours at run time, so it can differ from
 the report interval by a few minutes; pass both flags to make the arithmetic exact.
 
+### `disk_free_gb` is not the complement of `disk_used_gb`
+
+`disk_used_gb` is measured on `/System/Volumes/Data` (`df -k /System/Volumes/Data`), while
+`disk_free_gb` is the container-wide available figure. The two therefore do **not** add up to the
+capacity, and they can move in very different directions: on 2026-11-20 the Data volume grew
+**5.8 GB** while free space fell **16.1 GB**, because a prepared macOS update had written
+**15 GB** into `/System/Volumes/Update` — a different volume in the same container. Reading the
+gap as a leak, or as "used" minus "free" as the disk size, will be wrong. Check
+`du -sh /System/Volumes/Update` before concluding anything from a large free-space drop.
+
 ### `DIAG_24H` counts analytics payloads, not failures
 
 `.diag` files are not only failed `sysdiagnose` attempts. The per-user diagnostics store also
