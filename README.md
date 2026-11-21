@@ -119,7 +119,7 @@ honest record of "not measured" rather than a fabricated zero.
 
 | Column | Meaning |
 |---|---|
-| `ac_plugs` | Times the charger was connected in the interval |
+| `ac_plugs` | Transitions **to** AC in the interval. A bouncing plug contributes several, so this is an upper bound on physical plug-ins — 2026-11-21 read `4` for two insertions. Compare with `charger_bounces` |
 | `charge_sessions` | Charge sessions that reached `Charging Completed` |
 | `topoff_pct` | Highest charge **observed in the interval** — usually the ceiling a session reached, but on a day spent on battery it is simply the charge carried in from the previous day |
 | `batt_floor_pct` | Lowest charge reached |
@@ -141,6 +141,26 @@ capacity, and they can move in very different directions: on 2026-11-20 the Data
 **15 GB** into `/System/Volumes/Update` — a different volume in the same container. Reading the
 gap as a leak, or as "used" minus "free" as the disk size, will be wrong. Check
 `du -sh /System/Volumes/Update` before concluding anything from a large free-space drop.
+
+### `topoff_pct` can be a charge limit, not a full charge
+
+On most days `topoff_pct` is simply the highest level a charge session reached. On a machine with
+an **85 % charge limit** it is instead the limit itself: on 2026-11-21 the pack was plugged at
+89 %, went straight to `Charging Completed Limited`, and sat at exactly **85 % for 86 minutes**
+with `ChargingCurrent = 0` and `NotChargingReason = 0x01000000` while `pmset` reported
+`AC attached; not charging`. The same machine charged through 85 % to **100 %** on 11-19 and
+11-20, because macOS lifts the limit periodically for a full calibration charge. So a flat
+`topoff_pct` of 85 is a deliberate hold, not a stuck battery, and the two days cannot be compared
+without knowing which state was in force.
+
+### Capacity records stop while the machine sleeps
+
+`powerd` posts `Battery capacity change` only when the gauge moves **while awake**. A charge that
+happens during sleep therefore appears as a single jump: on 2026-11-21 the curve went **63 % →
+72 % in 16 minutes**, which is 34 pts/h — impossible on the 20 W adapter in use, and an artefact
+of the maintenance-sleep cycles in between. Never compute a rate across a sleep gap in the
+capacity curve. `collect_charging.py` sidesteps this by measuring from the charge level at
+plug-in to the peak reached before unplug, both of which are awake endpoints.
 
 ### `DIAG_24H` counts analytics payloads, not failures
 
