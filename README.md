@@ -24,7 +24,8 @@ One markdown snapshot per day in [`daily/`](daily/), plus a machine-readable row
 | Load average, core count | `sysctl vm.loadavg`, `hw.ncpu` |
 | Thermal throttling warnings | `pmset -g therm` |
 | Disk usage, SSD SMART status | `df`, `diskutil info disk0` |
-| Anomalies: kernel panics, Jetsam events | `/Library/Logs/DiagnosticReports/` (counted, never named) || Top CPU / memory processes | **never recorded** — see [Privacy](#privacy) |
+| Anomalies: kernel panics, Jetsam events | `/Library/Logs/DiagnosticReports/` (counted, never named) |
+| Top CPU / memory processes | **never recorded** — see [Privacy](#privacy) |
 
 ## Layout
 
@@ -120,10 +121,10 @@ honest record of "not measured" rather than a fabricated zero.
 | Column | Meaning |
 |---|---|
 | `ac_plugs` | Transitions **to** AC in the interval. A bouncing plug contributes several, so this is an upper bound on physical plug-ins — 2026-11-21 read `4` for two insertions. Compare with `charger_bounces` |
-| `charge_sessions` | Charge sessions that reached `Charging Completed` |
+| `charge_sessions` | **Not** a count of charge sessions — it counts `handleChargingStateUpdate` posts matching `Charging Completed`, and `powerd` emits each post twice from two log sources. 2026-11-22 read `67` for **34** distinct events and **one** actual charge (§[below](#charge_sessions-counts-posts-not-sessions)) |
 | `topoff_pct` | Highest charge **observed in the interval** — usually the ceiling a session reached, but on a day spent on battery it is simply the charge carried in from the previous day |
 | `batt_floor_pct` | Lowest charge reached |
-| `charge_rate_max` | Fastest ramp in one session, percentage points per hour |
+| `charge_rate_max` | Fastest ramp in one session, percentage points per hour. **Blind on a day with no power-source transition** — 2026-11-22 read `0.0` while the pack gained 5 points (§[below](#charge_rate_max-needs-a-plug-event)) |
 | `time_ac_h` | Hours on AC |
 | `time_batt_h` | Hours on battery |
 | `charger_bounces` | Transitions within 10 s of each other — a contact fault, not a plug |
@@ -140,7 +141,28 @@ capacity, and they can move in very different directions: on 2026-11-20 the Data
 **5.8 GB** while free space fell **16.1 GB**, because a prepared macOS update had written
 **15 GB** into `/System/Volumes/Update` — a different volume in the same container. Reading the
 gap as a leak, or as "used" minus "free" as the disk size, will be wrong. Check
-`du -sh /System/Volumes/Update` before concluding anything from a large free-space drop.
+`df -h /System/Volumes/Update` before concluding anything from a large free-space drop.
+
+> ⚠️ **Use `df` or `du -sx`, never `du -sh`.** `/System/Volumes/Update` has two other filesystems
+> mounted *inside* it — the sealed system volume (16 GiB) at `Update/mnt1` and a support volume
+> (2.1 GiB) at `Update/SFR/mnt1` — and plain `du` follows into them. On 2026-11-22 `du -sh` read
+> **15 G** for a volume that `df` measured at **967 MiB**. The number looks exactly like the
+> 11-20 update payload and is not.
+
+### `charge_rate_max` needs a plug event
+
+`collect_charging.py` scores a ramp only **inside an AC segment created by a power-source
+transition**, measured from the level at plug-in to the peak before unplug. A machine that stays
+plugged in for the whole interval has no such segment, so nothing is scored and the field falls
+back to `0.0`.
+
+`0.0` therefore means "no ramp was measurable", not "the battery did not charge". On 2026-11-22
+`ac_plugs` was `0`, `charge_rate_max` was `0.0`, and the pack still went **80 % → 85 % in 43 m
+53 s**: an average of **6.8 pts/h**, with **14.1 pts/h** in the steady part and a **27-minute**
+first percent. Quote `charge_rate_max` only when `ac_plugs > 0`, and never compress a multi-point
+refill into one rate — the first point after a hold costs far more than the rest and drags the
+average down by a factor of two.
+
 
 ### `topoff_pct` can be a charge limit, not a full charge
 
@@ -152,6 +174,31 @@ with `ChargingCurrent = 0` and `NotChargingReason = 0x01000000` while `pmset` re
 11-20, because macOS lifts the limit periodically for a full calibration charge. So a flat
 `topoff_pct` of 85 is a deliberate hold, not a stuck battery, and the two days cannot be compared
 without knowing which state was in force.
+
+### The "85 % hold" is a band, not a level
+
+A charge limit is not a flat line. On 2026-11-22 the machine spent the whole 24.3 h interval on AC
+with **zero power-source transitions**, and the pack still moved: it drifted **85 % → 80 % over
+22 h 22 m** (0.224 pts/h) and was then **re-filled to 85 % in 43 m 53 s**. 80 % is where the
+charger re-engages, so the observable is a **hysteresis band 80–85**, not a fixed 85.
+
+Two consequences for anyone reading the curve:
+
+- The drift is not 5 % of the pack's energy. 5 points on a ~47 Wh battery is 2.4 Wh — about twenty
+  minutes of idle use — spread over a day in which the system ran from the adapter. It is gauge
+  drift under a hold, and the refill is the gauge being re-anchored.
+- `batt_floor_pct` on such a day is the **bottom of the band** (80), not a discharge floor. Compare
+  it with 2026-11-21's `36`, which was real use, only after checking `time_batt_h`.
+
+### `charge_sessions` counts posts, not sessions
+
+`powerd` emits each `handleChargingStateUpdate` line **twice** — two log sources carry the same
+microsecond timestamp — and it re-asserts the limit state at every maintenance wake. On
+2026-11-22 the column read **67** for **34** distinct events: 33 `Charging Completed Limited`
+posts (one per dark wake, in step with the 15-minute sleep metronome) plus **one** genuine
+`Charging`. So the column is a measure of state-machine activity, not of charging. Read it
+alongside `ac_plugs`; when `ac_plugs = 0` there cannot have been more than one session no matter
+what this number says.
 
 ### Capacity records stop while the machine sleeps
 
@@ -170,6 +217,28 @@ ten files a few seconds after each wake** — expected, benign, and periodic. Be
 can sample mid-burst, the same wake can read as 2 or as 8 depending on which second it was
 taken. Treat `DIAG_24H` as "diagnostic payload files touched in the last 24 h", not as an
 anomaly counter; real incidents are visible as panics and as `killing_*` records in the log.
+
+There is a third way to read `0`: **the store can be reset out from under you.** On 2026-11-22 the
+system-wide directory was re-created at 11:18 and every file in it — including the previous day's
+8 — was gone, so `DIAG_24H` and the `.ips` count were both zero with no change in machine health.
+Check the directory's own mtime before concluding that nothing was written.
+
+### Check log retention before quoting a window
+
+Both log stores are circular and both shrink without warning. `pmset -g log` held **65.6 h** on
+2026-11-21 and **14.4 h** on 2026-11-22, having rotated overnight; the unified `sleepWake` stream
+held 24.0 h. Always read the first line of the file you are about to parse, and say which stream
+the sleep numbers came from. When both cover the interval, cross-check them: on 11-22 the two
+independent sources produced the same **51 blocks** and totals **0.1 min** apart (9.879 vs
+9.880 h).
+
+### Your own probes land in the numbers
+
+`log show` and `softwareupdate -l` are not free. The `pageins` delta includes the reads performed
+by the previous run's log scans (1–4 GiB a day), and on 2026-11-22 a single `softwareupdate -l`
+issued by the report itself accounted for the largest hourly block of `softwareupdated` activity
+in the whole interval (13 921 of 126 328 entries). Note the probe when its subject is the thing
+being measured.
 
 ## Privacy
 
