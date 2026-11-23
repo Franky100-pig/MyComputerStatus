@@ -143,6 +143,11 @@ capacity, and they can move in very different directions: on 2026-11-20 the Data
 gap as a leak, or as "used" minus "free" as the disk size, will be wrong. Check
 `df -h /System/Volumes/Update` before concluding anything from a large free-space drop.
 
+> ⚠️ **`diskutil apfs listSnapshots /System/Volumes/Data` can say "No snapshots" when there
+> are three.** The update snapshots belong to the *volume group*, not the Data volume alone;
+> `tmutil listlocalsnapshots /` lists them (verified 2026-11-23). Do not read "no snapshots" as
+> "the staged update was released".
+
 > ⚠️ **Use `df` or `du -sx`, never `du -sh`.** `/System/Volumes/Update` has two other filesystems
 > mounted *inside* it — the sealed system volume (16 GiB) at `Update/mnt1` and a support volume
 > (2.1 GiB) at `Update/SFR/mnt1` — and plain `du` follows into them. On 2026-11-22 `du -sh` read
@@ -163,6 +168,22 @@ first percent. Quote `charge_rate_max` only when `ac_plugs > 0`, and never compr
 refill into one rate — the first point after a hold costs far more than the rest and drags the
 average down by a factor of two.
 
+
+### `ac_plugs = 0` is ambiguous — read `time_ac_h` with it
+
+`ac_plugs` counts transitions **to** AC. Both a day that never left the adapter (2026-11-22:
+`0`, 24.3 h AC) and a day with exactly one unplug and no re-plug (2026-11-23: `0`, 9.4 h AC /
+16.5 h battery) read `0`. Use the two time columns to tell them apart; their sum should equal
+the report interval.
+
+Until 2026-11-23 those columns could also be flatly wrong. `collect_charging.py` seeded the
+pre-transition segment from the **first capacity record**, but a held charge posts no capacity
+record until something changes — so on 11-23 that record was the detach itself, marked
+`Batt`, and the first 9.4 h on AC were counted as battery (`TIME_AC_H=0.0`, `TIME_BATT_H=25.9`).
+The collector now infers the pre-transition source by inverting the first transition when no
+capacity record predates it, and clips segments to the requested window (an `--until` before a
+transition used to yield a negative duration). Days whose first capacity record predates their
+first transition take the unchanged path.
 
 ### `topoff_pct` can be a charge limit, not a full charge
 
