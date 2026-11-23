@@ -93,7 +93,20 @@ def summarise(curve, transitions, completed, start=None, end=None):
     def norm(s):
         return "AC" if s.upper().startswith("AC") else "Battery"
 
-    segments, cur_src, cur_t = [], norm(curve[0][2]), start
+    # ...but the first sample is NOT a reliable statement about the start of the
+    # window. A held charge posts no capacity record at all, so the first record in
+    # the dump is often the power-source transition itself - and it reports the
+    # source AFTER the switch. On 2026-11-23 that made 9.4 h of AC read as battery
+    # (TIME_AC_H 0.0 / TIME_BATT_H 25.9 for an interval that began on AC). A
+    # transition to X implies the machine was not on X before it, so when no
+    # capacity record predates the first transition, invert that transition.
+    first_t = transitions[0] if transitions else None
+    if first_t is not None and curve[0][0] >= first_t[0]:
+        cur_src = "Battery" if norm(first_t[1]) == "AC" else "AC"
+    else:
+        cur_src = norm(curve[0][2])
+
+    segments, cur_t = [], start
     for t, src in transitions:
         if t <= start:
             cur_src = norm(src)
@@ -102,8 +115,13 @@ def summarise(curve, transitions, completed, start=None, end=None):
         cur_t, cur_src = t, norm(src)
     segments.append((cur_t, end, cur_src))
 
-    ac_h = sum((b - a).total_seconds() for a, b, s in segments if s == "AC") / 3600
-    batt_h = sum((b - a).total_seconds() for a, b, s in segments if s != "AC") / 3600
+    # Clip to the window before summing. A transition AFTER `until` still opens a
+    # segment, and the next (end, ...) one then runs backwards - a sub-window query
+    # ending before a plug-in used to report a negative TIME_BATT_H. The daily run
+    # always ends at "now", so this only ever bit exact-window queries.
+    clipped = [(max(a, start), min(b, end), s) for a, b, s in segments]
+    ac_h = sum((b - a).total_seconds() for a, b, s in clipped if s == "AC" and b > a) / 3600
+    batt_h = sum((b - a).total_seconds() for a, b, s in clipped if s != "AC" and b > a) / 3600
 
     # Fastest ramp inside a single AC segment, measured the way the report states it:
     # from the charge level in force at the moment of plugging to the level reached at
