@@ -230,6 +230,28 @@ of the maintenance-sleep cycles in between. Never compute a rate across a sleep 
 capacity curve. `collect_charging.py` sidesteps this by measuring from the charge level at
 plug-in to the peak reached before unplug, both of which are awake endpoints.
 
+### The swap pool shrinks without a reboot
+
+The pool is dynamic in **both** directions, and the daily report once claimed otherwise. On
+2026-11-22 macOS grew it from 2 048 MB to 3 072 MB by creating `swapfile2`; the 11-23 report
+concluded "the pool never shrinks without a reboot, so 3 072 MB is the new floor until the next
+restart". Twenty-four hours later, with the boot epoch unchanged at 17.9 days, `swapfile2` was
+**gone** — `/System/Volumes/VM` mtime `22:37:45`, `vm.swapusage` back to `total = 2048.00M`, and
+only `swapfile0` / `swapfile1` left. The kernel took the file back because it was entirely unused
+(1 237 MB used of 3 072 MB leaves a whole 1 024 MB file empty).
+
+So `swap_used_mb` can fall in two completely different ways, and the sampler's flow counters are
+the only way to tell them apart:
+
+- **Paged in.** `swapins` rises by roughly the amount `used` falls. The memory came back.
+- **Discarded.** `swapins` and `swapouts` barely move. Pages left swap because the VM objects that
+  owned them were destroyed — memory freed, not migrated. On 2026-11-24 `used` fell **1 786 MB**
+  while `swapins` moved only **370 MB** and `swapouts` **84 MB**, so ~1.4 GB was discarded.
+
+Read `sysctl vm.swapusage` together with `ls -l /System/Volumes/VM` and the file dates. A pool that
+changed size without a boot-epoch change is a shrink or a grow, never a reboot — and a `used` figure
+that drops is not automatically a recovery.
+
 ### `DIAG_24H` counts analytics payloads, not failures
 
 `.diag` files are not only failed `sysdiagnose` attempts. The per-user diagnostics store also
@@ -238,6 +260,10 @@ ten files a few seconds after each wake** — expected, benign, and periodic. Be
 can sample mid-burst, the same wake can read as 2 or as 8 depending on which second it was
 taken. Treat `DIAG_24H` as "diagnostic payload files touched in the last 24 h", not as an
 anomaly counter; real incidents are visible as panics and as `killing_*` records in the log.
+
+The trigger is not always a wake. On 2026-11-24 the two bursts in the interval began **10 s after**
+a plug-in at 10:10:04 and **10 s after** a plug-in at 19:43:56, with the machine awake throughout.
+Check the power-source transitions before blaming a wake.
 
 There is a third way to read `0`: **the store can be reset out from under you.** On 2026-11-22 the
 system-wide directory was re-created at 11:18 and every file in it — including the previous day's
