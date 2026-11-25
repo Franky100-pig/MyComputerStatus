@@ -252,6 +252,19 @@ Read `sysctl vm.swapusage` together with `ls -l /System/Volumes/VM` and the file
 changed size without a boot-epoch change is a shrink or a grow, never a reboot — and a `used` figure
 that drops is not automatically a recovery.
 
+The pool then **grew back** on 2026-11-25: `swapfile2` re-created at `13:04:35`, `total` back to
+3 072 MB, boot epoch unchanged at 18.9 days. Six days of this column therefore read
+2 048 → 3 072 → 2 048 → 3 072 with no restart anywhere, which is the useful conclusion: **the pool
+is allocated to fit the working set and returned when a whole file falls idle. It has no floor and
+no ceiling worth quoting — track `used`, not `total`.**
+
+A third direction is worth naming, because it looks like the two above but is not:
+
+- **Evicted.** `swapouts` rises by roughly the amount `used` rises, and the compressor falls.
+  On 2026-11-25 the machine wrote **85 660 pages (1.31 GiB)** to disk between 13:00 and 13:15
+  while the compressor dropped 7.43 → 6.06 GB and `swapins` moved **85 pages**. That is compressed
+  memory moving to disk under real pressure, not a release and not a discard.
+
 ### `DIAG_24H` counts analytics payloads, not failures
 
 `.diag` files are not only failed `sysdiagnose` attempts. The per-user diagnostics store also
@@ -269,6 +282,26 @@ There is a third way to read `0`: **the store can be reset out from under you.**
 system-wide directory was re-created at 11:18 and every file in it — including the previous day's
 8 — was gone, so `DIAG_24H` and the `.ips` count were both zero with no change in machine health.
 Check the directory's own mtime before concluding that nothing was written.
+
+### Count kills by `killing_idle_process`, not by `killing`
+
+The kernel writes **two** log lines per reap, about a second apart:
+
+```
+memorystatus: killing (idle) <name> [<pid>] due to idle-exit (9)
+memorystatus: killing_idle_process pid <pid> [<name>] (idle-exit 0 29294s rf:- type:daemon) 3008KB - memorystatus_available_pages: 424482
+```
+
+Grep for `killing` and every kill counts twice — on 2026-11-25 that is 2 233 lines for **1 117**
+actual kills, which silently doubles the reported rate to 92/h. Count lines matching
+`killing_idle_process` (idle reaps) plus `killing_specific_process` (cap and pressure reaps), and
+verify the two halves of an episode pair up. This is the same log-format doubling documented for
+`charge_sessions` above, in a different subsystem, and it is the third place in this collector
+where counting lines instead of events gives exactly 2×.
+
+A `per-process-limit` kill also produces a `JetsamEvent-*.ips` in
+`/Library/Logs/DiagnosticReports` (bug type 298) which macOS later moves to `Retired/`. The
+`.ips` and the kernel line describe the same event; count it once.
 
 ### Check log retention before quoting a window
 
