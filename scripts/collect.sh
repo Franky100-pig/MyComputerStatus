@@ -98,6 +98,19 @@ kv JETSAM_24H "$(find /Library/Logs/DiagnosticReports -name 'JetsamEvent-*.ips' 
 # directory and is populated even when the system-wide store is absent. Count
 # both, or a burst of failed sysdiagnose attempts reads as zero.
 kv DIAG_24H "$( { find /Library/Logs/DiagnosticReports ~/Library/Logs/DiagnosticReports -maxdepth 1 -name '*.diag' -mtime -1 2>/dev/null; } | wc -l | tr -d ' ')"
+# The stores can disappear entirely (2026-11-26): both DiagnosticReports directories were gone
+# and the parent had been rebuilt with an empty CrashReporter subdirectory. `find` on a missing
+# directory returns nothing, so all three counters above read 0 in that state - which looks
+# exactly like a clean day. Emit the stores' existence so the zeros can be judged. Deliberately
+# NOT a CSV column: append_csv.py ignores keys it does not map, so past rows keep their shape.
+STORES_PRESENT=0
+[ -d /Library/Logs/DiagnosticReports ] && STORES_PRESENT=$((STORES_PRESENT+1))
+[ -d "$HOME/Library/Logs/DiagnosticReports" ] && STORES_PRESENT=$((STORES_PRESENT+1))
+case "$STORES_PRESENT" in
+  2) kv DIAG_STORE present ;;
+  1) kv DIAG_STORE one-missing ;;
+  *) kv DIAG_STORE absent ;;
+esac
 
 # ---- Process names: NEVER collected ----
 # The keys are emitted empty so the CSV schema stays stable. Per-process detail

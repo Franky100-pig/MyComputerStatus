@@ -168,6 +168,15 @@ first percent. Quote `charge_rate_max` only when `ac_plugs > 0`, and never compr
 refill into one rate — the first point after a hold costs far more than the rest and drags the
 average down by a factor of two.
 
+Six days of measurements on the same pack and, as far as this collector can see, the same adapter
+give **12.0, 15.4, 18.9, 20.1, 21.1** pts/h whole-session and **14.6, 22.4, 22.5** pts/h for the
+steady middle. The 22.4/22.5 pair looked stable enough on 11-25 to be written down as "the only
+stable figure"; 24 hours later the same measurement read **14.6**. No covariate in this log
+(time of day, starting charge, reap activity, load) tracks the spread, and adapter wattage is
+deliberately not read (see [Privacy](#privacy)), so a lower-rated brick or a hub in the path is
+invisible here. Treat the column as a **range, not a value**, and do not derive a charging-time
+estimate from a single day.
+
 
 ### `ac_plugs = 0` is ambiguous — read `time_ac_h` with it
 
@@ -258,6 +267,13 @@ The pool then **grew back** on 2026-11-25: `swapfile2` re-created at `13:04:35`,
 is allocated to fit the working set and returned when a whole file falls idle. It has no floor and
 no ceiling worth quoting — track `used`, not `total`.**
 
+It grew once more on **2026-11-26**, to **4 096 MB**, with `swapfile3` created at `12:57`. This
+time the ordering is cleaner than "after the plug-in": the sampler rows at 12:51:45 and 13:06:45
+bracket the file's birth, and between them swap used rose **502 MB** while **510 MB** was written
+out and the compressor fell 0.62 GB. The file was created **inside** an eviction, not after a
+power event, which supports the simplest reading of all five changes: the kernel adds a swap file
+when it needs the room.
+
 A third direction is worth naming, because it looks like the two above but is not:
 
 - **Evicted.** `swapouts` rises by roughly the amount `used` rises, and the compressor falls.
@@ -282,6 +298,26 @@ There is a third way to read `0`: **the store can be reset out from under you.**
 system-wide directory was re-created at 11:18 and every file in it — including the previous day's
 8 — was gone, so `DIAG_24H` and the `.ips` count were both zero with no change in machine health.
 Check the directory's own mtime before concluding that nothing was written.
+
+And a fourth, on 2026-11-26: the store can be **deleted outright**, with the parent rebuilt around
+an empty `CrashReporter` subdirectory. Both `/Library/Logs/DiagnosticReports` and
+`~/Library/Logs/DiagnosticReports` were absent, neither had a `.diag` or `.ips` anywhere under it,
+and `/Library/Logs` carried an mtime of 17:00:13 with `~/Library/Logs` at 19:57:03 — each matching
+the creation time of the `CrashReporter` directory inside it. `find` on a missing directory returns
+nothing, so `PANIC_FILES`, `JETSAM_24H` and `DIAG_24H` all read `0`: a deleted store produces the
+same row as a clean day.
+
+`collect.sh` therefore emits a fourth key alongside the counters:
+
+```
+DIAG_STORE=present | one-missing | absent
+```
+
+It is **not** a CSV column — `append_csv.py` ignores keys it does not map, so historical rows keep
+their shape. Read the three zeros as "no events" only when `DIAG_STORE` reads `present`; when it
+reads `absent`, the honest value is *unknown*, and the report should say so instead of scoring a
+good day. Note that a `per-process-limit` kill still leaves a `killing_specific_process` line in
+the kernel stream, so that one check survives the store's disappearance.
 
 ### Count kills by `killing_idle_process`, not by `killing`
 
@@ -311,6 +347,21 @@ held 24.0 h. Always read the first line of the file you are about to parse, and 
 the sleep numbers came from. When both cover the interval, cross-check them: on 11-22 the two
 independent sources produced the same **51 blocks** and totals **0.1 min** apart (9.879 vs
 9.880 h).
+
+Rotation is not the only way to lose the store. On **2026-11-26** `pmset -g log` printed one
+record from 15:29:51 and four minutes later returned `Error - no messages found in PM ASL data
+store at: /var/log/powermanagement` — the **directory did not exist**. A rotated store still holds
+tens of hours; an empty one holds nothing, and the difference matters because "0 % asleep" is a
+very different claim from "no data". Check that the *store exists*, not just that it is old:
+
+```bash
+ls -ld /var/log/powermanagement        # a missing dir = pmset is blind
+pmset -g log | head -3                 # banner + first record, or the error line
+log show --last 24h --predicate 'subsystem == "com.apple.powerd" AND category == "sleepWake"' | head -3
+```
+
+On that day the `sleepWake` stream still held the full 24.0 h and was the only usable source for
+the sleep numbers — the report says so rather than presenting the two as equivalent.
 
 ### Your own probes land in the numbers
 
