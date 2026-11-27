@@ -154,6 +154,13 @@ gap as a leak, or as "used" minus "free" as the disk size, will be wrong. Check
 > **15 G** for a volume that `df` measured at **967 MiB**. The number looks exactly like the
 > 11-20 update payload and is not.
 
+> ⚠️ **`du` on macOS counts 512-byte blocks by default, not 1 KiB.** `du -sx /System/Volumes/Update`
+> prints **1974320**, and that is **964 MiB**, not 1 928 MiB. Six daily reports read the raw count as
+> KiB and concluded that `df` and `du` disagreed by 2× on the update volume; corrected 2026-11-27.
+> Pass `-m` (megabytes) or set `BLOCKSIZE=1024` if you want a number you can divide by 1024, and
+> check the unit before reporting a discrepancy — a 2× gap between two tools measuring the same
+> volume is almost always a block-size misreading, not a filesystem fact.
+
 ### `charge_rate_max` needs a plug event
 
 `collect_charging.py` scores a ramp only **inside an AC segment created by a power-source
@@ -171,11 +178,13 @@ average down by a factor of two.
 Six days of measurements on the same pack and, as far as this collector can see, the same adapter
 give **12.0, 15.4, 18.9, 20.1, 21.1** pts/h whole-session and **14.6, 22.4, 22.5** pts/h for the
 steady middle. The 22.4/22.5 pair looked stable enough on 11-25 to be written down as "the only
-stable figure"; 24 hours later the same measurement read **14.6**. No covariate in this log
-(time of day, starting charge, reap activity, load) tracks the spread, and adapter wattage is
-deliberately not read (see [Privacy](#privacy)), so a lower-rated brick or a hub in the path is
-invisible here. Treat the column as a **range, not a value**, and do not derive a charging-time
-estimate from a single day.
+stable figure"; 24 hours later the same measurement read **14.6**. A seventh day (11-27) then
+produced **20.9, 19.0 and 15.6** in three sessions on the same adapter, at the highest 1-minute load
+of the week. No covariate in this log (time of day, starting charge, reap activity, load) tracks the
+spread — 11-24 charged at 21.1 pts/h with a 1-minute load of 1.74 and 11-27 charged at 20.9 with
+3.82 — and adapter wattage is deliberately not read (see [Privacy](#privacy)), so a lower-rated
+brick or a hub in the path is invisible here. Treat the column as a **range, not a value**, and do
+not derive a charging-time estimate from a single day.
 
 
 ### `ac_plugs = 0` is ambiguous — read `time_ac_h` with it
@@ -204,6 +213,33 @@ with `ChargingCurrent = 0` and `NotChargingReason = 0x01000000` while `pmset` re
 11-20, because macOS lifts the limit periodically for a full calibration charge. So a flat
 `topoff_pct` of 85 is a deliberate hold, not a stuck battery, and the two days cannot be compared
 without knowing which state was in force.
+
+On **2026-11-27** the log finally caught the transition itself. The sequence was: `Charging Completed
+Limited` at 09:24:26 with the pack at 85 %, unplug at 10:01:04, **plug in at 10:13:55**, then nine
+seconds later
+
+```
+2026-11-27 10:14:04.492087  [com.apple.powerd:charging] SOC limit disabled
+```
+
+followed by fourteen capacity records climbing 86 → **99 %**, where the pack was unplugged at
+11:07:19. `DailyMaxSoc` in `IORegistry` independently reads **99**. So the observable for a lifted
+limit is that single line in the `powerd` **`charging`** category — not `batterychargingstate`.
+
+Two cautions, both learned the same day:
+
+- **`SOC limit disabled` also prints on battery**, where the limit is simply not in force and the
+  line means nothing. It appeared three times in 24 h — 01:10:37 and 10:10:02 (both on battery),
+  10:14:04 (charging). Only the third one is evidence.
+- **The value is redacted.** The policy arrives as `received SOC limit from <pid>: <private>` and
+  `SOC limit policy:<private>`, so "the OS decided to recalibrate" and "the limit was switched off by
+  hand" are indistinguishable from the log. Full charges on 11-19, 11-20, 11-21, then five days at
+  85, then 11-27 fits a six-day recalibration cadence — but a cadence inferred from four points is a
+  hypothesis, not a mechanism.
+
+The cost of a lift is measurable for the first time: on 11-27 the pack sat **above 90 % for 3 h 4 m**
+(2 h 1 m awake, 1 h 3 m asleep). `LifetimeData.TimeAtHighSoc` in `IORegistry` now has data to compare
+against the next one.
 
 ### The "85 % hold" is a band, not a level
 
@@ -274,6 +310,20 @@ out and the compressor fell 0.62 GB. The file was created **inside** an eviction
 power event, which supports the simplest reading of all five changes: the kernel adds a swap file
 when it needs the room.
 
+**A release can take two files at once.** At **21:55:12 on 11-26** `/System/Volumes/VM`'s mtime
+moved and *both* `swapfile2` and `swapfile3` disappeared, taking the pool from 4 096 MB back to
+**2 048 MB** — ten minutes after the 21:44:30 reap burst began (100 idle kills, 21:44:30 →
+21:46:10) and inside a 15-minute sampler gap in which swap used fell **2 629 → 1 026 MB**. So the
+pool follows the **working set**, in both directions, on a scale of minutes:
+
+| Day | Change | Trigger | Ordering |
+|---|---|---|---|
+| 11-22 | 2 048 → 3 072 | `swapfile2` born | not established |
+| 11-23 | 3 072 → 2 048 | `swapfile2` deleted | file entirely unused |
+| 11-25 | 2 048 → 3 072 | `swapfile2` re-born | 14 min after a plug-in, inside a burst |
+| 11-26 | 3 072 → 4 096 | `swapfile3` born | inside an eviction |
+| **11-27** | **4 096 → 2 048** | **both extra files deleted** | **10 min after a reap burst** |
+
 A third direction is worth naming, because it looks like the two above but is not:
 
 - **Evicted.** `swapouts` rises by roughly the amount `used` rises, and the compressor falls.
@@ -319,6 +369,19 @@ reads `absent`, the honest value is *unknown*, and the report should say so inst
 good day. Note that a `per-process-limit` kill still leaves a `killing_specific_process` line in
 the kernel stream, so that one check survives the store's disappearance.
 
+**`present` is not the same as "all day".** The stores came back on 2026-11-27 with *birth* times of
+15:46:23 (system) and 19:39:23 (user), and every file in them dated from 19:39 — no backfill, no
+recovery of the 11-26 window. A store that is 31 minutes old can only report on 31 minutes, so
+`present` converts *unknown* into *known-partial*, not into *known-clean*:
+
+```
+stat -f "birth=%SB mtime=%Sm %N" ~/Library/Logs/DiagnosticReports
+```
+
+Check the birth time alongside `DIAG_STORE`, and state the covered window in the report rather than
+the interval. The re-creation was itself done by the post-plug-in `.diag` burst — the same eight
+`SFA-*` payloads that appear in `DIAG_24H` are what re-materialised the directory.
+
 ### Count kills by `killing_idle_process`, not by `killing`
 
 The kernel writes **two** log lines per reap, about a second apart:
@@ -362,6 +425,16 @@ log show --last 24h --predicate 'subsystem == "com.apple.powerd" AND category ==
 
 On that day the `sleepWake` stream still held the full 24.0 h and was the only usable source for
 the sleep numbers — the report says so rather than presenting the two as equivalent.
+
+A store that reappears is **not** a store that came back. On 2026-11-27 `/var/log/powermanagement`
+existed again (directory mtime 14:34) but its oldest record was **15:55:30** — 3 h 3 m of a 24.1 h
+interval, 12.6 %. The eleven hours of 11-26 that the deletion destroyed were destroyed; the recovery
+is always forward-only. Read `pmset -g log | head -3` for the first record, never `ls` alone, and
+when the coverage is that thin say so in the header rather than in a footnote.
+
+Retention across six consecutive runs: **14.4 h → 7.7 h → 35.6 h → 59.7 h → empty → 3 h**. There is
+no trend to design around, which is the practical argument for taking sleep accounting from
+`sleepWake` every day instead of choosing per run.
 
 ### Your own probes land in the numbers
 
