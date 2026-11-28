@@ -161,30 +161,48 @@ gap as a leak, or as "used" minus "free" as the disk size, will be wrong. Check
 > check the unit before reporting a discrepancy — a 2× gap between two tools measuring the same
 > volume is almost always a block-size misreading, not a filesystem fact.
 
-### `charge_rate_max` needs a plug event
+**A rise inside the Data volume has no explanation in this schema.** On 2026-11-28 used went
+**287.82 → 289.22 GB** and free **135.93 → 134.53 GB** in the same interval, i.e. **+1.40 GB used
+and −1.40 GB free**, with the VM volume unchanged at 2 GB — so the "container moved space between
+volumes" reading that explained the previous two days does not apply. `~/Downloads` had **0 files**
+modified in 24 h, so downloads were not it; the two largest trees are application containers
+(**28.8 GB**) and application support (**21.6 GB**), and neither has a baseline anywhere in this
+repo. The CSV's single `disk_used_gb` column cannot attribute a delta, so the honest entry is
+"grew, cause unknown" rather than a guess. Re-record `du -sx -m` for the three largest trees
+periodically if the number starts moving daily.
 
-`collect_charging.py` scores a ramp only **inside an AC segment created by a power-source
-transition**, measured from the level at plug-in to the peak before unplug. A machine that stays
-plugged in for the whole interval has no such segment, so nothing is scored and the field falls
-back to `0.0`.
+### `charge_rate_max` needs a *rise*, not a plug event
+
+`collect_charging.py` scores a ramp **inside an AC segment**, measured from the charge level in
+force at the segment's start to the peak reached before it ends. It does not require a
+power-source transition to open that segment: if the machine is already on AC when the window
+begins, the segment runs the whole window and is scored all the same.
+
+**This section previously claimed the opposite** — that a machine plugged in for the whole
+interval has no segment and therefore reads `0.0`. 2026-11-28 refutes it: `ac_plugs = 0` over
+24.2 h AC, and the column read **16.3** from a clean 55 → 100 % ramp inside the single
+whole-window segment. The condition that actually produces `0.0` is a segment with **no net rise**
+above its starting level, which is what a held charge looks like:
 
 `0.0` therefore means "no ramp was measurable", not "the battery did not charge". On 2026-11-22
 `ac_plugs` was `0`, `charge_rate_max` was `0.0`, and the pack still went **80 % → 85 % in 43 m
 53 s**: an average of **6.8 pts/h**, with **14.1 pts/h** in the steady part and a **27-minute**
-first percent. Quote `charge_rate_max` only when `ac_plugs > 0`, and never compress a multi-point
-refill into one rate — the first point after a hold costs far more than the rest and drags the
-average down by a factor of two.
+first percent. The peak there was 85 against a start of 85 — the pack refilled to the band it
+started in, so there was nothing to score. Never compress a multi-point refill into one rate, and
+the first point after a hold costs far more than the rest and drags the average down by a factor
+of two.
 
-Six days of measurements on the same pack and, as far as this collector can see, the same adapter
-give **12.0, 15.4, 18.9, 20.1, 21.1** pts/h whole-session and **14.6, 22.4, 22.5** pts/h for the
-steady middle. The 22.4/22.5 pair looked stable enough on 11-25 to be written down as "the only
+Seven days of measurements on the same pack and, as far as this collector can see, the same adapter
+give **12.0, 15.4, 16.3, 18.9, 20.1, 21.1** pts/h whole-session and **14.6, 22.4, 22.5** pts/h for
+the steady middle. The 22.4/22.5 pair looked stable enough on 11-25 to be written down as "the only
 stable figure"; 24 hours later the same measurement read **14.6**. A seventh day (11-27) then
 produced **20.9, 19.0 and 15.6** in three sessions on the same adapter, at the highest 1-minute load
-of the week. No covariate in this log (time of day, starting charge, reap activity, load) tracks the
-spread — 11-24 charged at 21.1 pts/h with a 1-minute load of 1.74 and 11-27 charged at 20.9 with
-3.82 — and adapter wattage is deliberately not read (see [Privacy](#privacy)), so a lower-rated
-brick or a hub in the path is invisible here. Treat the column as a **range, not a value**, and do
-not derive a charging-time estimate from a single day.
+of the week; an eighth produced **16.3** at a mid-range load. No covariate in this log (time of day,
+starting charge, reap activity, load) tracks the spread — 11-24 charged at 21.1 pts/h with a
+1-minute load of 1.74 and 11-27 charged at 20.9 with 3.82 — and adapter wattage is deliberately not
+read (see [Privacy](#privacy)), so a lower-rated brick or a hub in the path is invisible here.
+Treat the column as a **range, not a value**, and do not derive a charging-time estimate from a
+single day.
 
 
 ### `ac_plugs = 0` is ambiguous — read `time_ac_h` with it
@@ -192,7 +210,11 @@ not derive a charging-time estimate from a single day.
 `ac_plugs` counts transitions **to** AC. Both a day that never left the adapter (2026-11-22:
 `0`, 24.3 h AC) and a day with exactly one unplug and no re-plug (2026-11-23: `0`, 9.4 h AC /
 16.5 h battery) read `0`. Use the two time columns to tell them apart; their sum should equal
-the report interval.
+the report interval. 2026-11-28 is a third case of the same `0` — 24.2 h AC, 0.0 h battery — and it
+differs from 11-22 in every other column: `topoff_pct` 100 instead of 85, `charge_rate_max` 16.3
+instead of 0.0, because one day ran a full charge and the other held a limit. With
+`time_batt_h = 0.0` there is no discharge window at all, so no asleep/awake discharge rate is
+computable that day — say so rather than dividing by zero.
 
 Until 2026-11-23 those columns could also be flatly wrong. `collect_charging.py` seeded the
 pre-transition segment from the **first capacity record**, but a held charge posts no capacity
@@ -241,6 +263,18 @@ The cost of a lift is measurable for the first time: on 11-27 the pack sat **abo
 (2 h 1 m awake, 1 h 3 m asleep). `LifetimeData.TimeAtHighSoc` in `IORegistry` now has data to compare
 against the next one.
 
+**2026-11-28 settled both open questions, and the cadence was the wrong one.** The limit stayed
+off: the pack went **55 → 100 %** in 2 h 45 m and the only state post in 24 h read plain
+`Charging Completed` — with **no `Limited` suffix at all**. That absence is better evidence than
+the `SOC limit disabled` line, which prints on battery too and whose value is redacted. So read
+`topoff_pct = 100` with a missing `Limited` post as "limit off", and `topoff_pct = 85` with a
+`Limited` post as "limit on".
+
+The proposed six-day recalibration cadence (`11-19/20/21 → five days at 85 → 11-27`) predicted
+the next full charge around 12-02; it arrived the next day. **Two consecutive full charges is not
+a cadence**, and the four-point hypothesis is withdrawn. `SOC limit disabled` is a state change,
+not a schedule — which also means `topoff_pct` cannot be forecast from its own history.
+
 ### The "85 % hold" is a band, not a level
 
 A charge limit is not a flat line. On 2026-11-22 the machine spent the whole 24.3 h interval on AC
@@ -256,6 +290,20 @@ Two consequences for anyone reading the curve:
 - `batt_floor_pct` on such a day is the **bottom of the band** (80), not a discharge floor. Compare
   it with 2026-11-21's `36`, which was real use, only after checking `time_batt_h`.
 
+**The band is a property of the limited state, not of the pack.** On 2026-11-28 the limit was off
+and the machine sat on AC at a reported **100 % for 21 h 25 m** with **no capacity record at all**
+— 36 records in 24 h, the last one at 22:55:53 — while `ChargingCurrent` read `0 mA`,
+`IsCharging` read `No` and `NotChargingReason` `0x400001`. So:
+
+- **A flat 85 with a `Limited` post** is hysteresis: the charger re-engages at 80.
+- **A flat 100 with `Charging Completed`** is charging disabled: the pack is not being topped up
+  and there is no band to observe.
+
+The missing 3 points went into the *other* register: `StateOfCharge` reads **97** under a
+published `CurrentCapacity` of 100. A flat level therefore never means "nothing happened" — check
+which of the two states is in force, and compare `StateOfCharge` before concluding the pack did
+not move.
+
 ### `charge_sessions` counts posts, not sessions
 
 `powerd` emits each `handleChargingStateUpdate` line **twice** — two log sources carry the same
@@ -265,6 +313,11 @@ posts (one per dark wake, in step with the 15-minute sleep metronome) plus **one
 `Charging`. So the column is a measure of state-machine activity, not of charging. Read it
 alongside `ac_plugs`; when `ac_plugs = 0` there cannot have been more than one session no matter
 what this number says.
+
+The inflation is specific to the **limited** state: on 2026-11-28, with the limit off, the column
+read **1** for one session across 24.2 h on AC and eleven hours of sleep. So a large
+`charge_sessions` under a small number of real sessions is itself evidence that a charge limit is
+in force — the re-assertion, not the charging, is what generates the posts.
 
 ### Capacity records stop while the machine sleeps
 
@@ -323,6 +376,14 @@ pool follows the **working set**, in both directions, on a scale of minutes:
 | 11-25 | 2 048 → 3 072 | `swapfile2` re-born | 14 min after a plug-in, inside a burst |
 | 11-26 | 3 072 → 4 096 | `swapfile3` born | inside an eviction |
 | **11-27** | **4 096 → 2 048** | **both extra files deleted** | **10 min after a reap burst** |
+| **11-28** | **2 048 → 2 048** | **no change** | pool held a second day; no ~13:00 growth |
+
+**But a reap does not imply a release.** On 2026-11-28 the machine ran the same 100-kill episode
+(18:22:27 → 18:24:06) and the pool **did not move** — `/System/Volumes/VM` kept its 11-27 21:46
+mtime and `swap_used_mb` fell only 209 MB, of which 47 MB was paged in and 0 MB written out. So the
+reaper is *sometimes* the visible half of a refit (11-27) and sometimes an event with no visible
+consequence at all (11-28). The 100-kills-in-100-seconds shape is now two for two and looks like a
+**cap plus a 1-second pacer**; what fires it is still unknown.
 
 A third direction is worth naming, because it looks like the two above but is not:
 
@@ -343,6 +404,14 @@ anomaly counter; real incidents are visible as panics and as `killing_*` records
 The trigger is not always a wake. On 2026-11-24 the two bursts in the interval began **10 s after**
 a plug-in at 10:10:04 and **10 s after** a plug-in at 19:43:56, with the machine awake throughout.
 Check the power-source transitions before blaming a wake.
+
+**The plug explanation survived four days and then failed its null test.** On 2026-11-28 there was
+**no power transition of any kind** in 24.2 h — `AC_PLUGS = 0`, an empty `Settings change for power
+source` grep over 15 968 `powerd` lines — and the same **eight `SFA-*` payloads** still arrived, at
+19:35:13–17. Four coincidences (10 s, 10 s, 10 s, 8 s after a plug) are not a mechanism; the plug
+was a covariate of days on which the machine was being plugged in at all. The burst's real trigger
+is unknown, and the honest description is "a burst of 6–10 files a few seconds wide, at a time this
+log has not predicted".
 
 There is a third way to read `0`: **the store can be reset out from under you.** On 2026-11-22 the
 system-wide directory was re-created at 11:18 and every file in it — including the previous day's
@@ -402,6 +471,20 @@ A `per-process-limit` kill also produces a `JetsamEvent-*.ips` in
 `/Library/Logs/DiagnosticReports` (bug type 298) which macOS later moves to `Retired/`. The
 `.ips` and the kernel line describe the same event; count it once.
 
+**But the two do not always both exist.** On 2026-11-28 the kernel stream recorded **two**
+`per-process-limit` reaps (22:26:45 and 17:53:02) while `JETSAM_24H` read **0**, because the system
+store was rebuilt at **19:51:33** — after both events — and took their reports with it:
+
+| Event | Kernel record | `.ips` |
+|---|---|---|
+| `per-process-limit` #1 | 11-27 22:26:45, 15 360 KB, 597 782 pages avail. | **destroyed with the old store** |
+| `per-process-limit` #2 | 11-28 17:53:02, 15 792 KB, 585 594 pages avail. | **destroyed with the old store** |
+
+So `JETSAM_24H` is a count of **survivors**, not of events, and on a day with two store rebuilds it
+is close to meaningless. The kernel line is the durable record: it lives in the unified log, needs
+no directory to exist, and carries the available-pages figure the `.ips` was wanted for. Read the
+zero as "no report survived" and quote the kernel count alongside it.
+
 ### Check log retention before quoting a window
 
 Both log stores are circular and both shrink without warning. `pmset -g log` held **65.6 h** on
@@ -432,9 +515,21 @@ interval, 12.6 %. The eleven hours of 11-26 that the deletion destroyed were des
 is always forward-only. Read `pmset -g log | head -3` for the first record, never `ls` alone, and
 when the coverage is that thin say so in the header rather than in a footnote.
 
-Retention across six consecutive runs: **14.4 h → 7.7 h → 35.6 h → 59.7 h → empty → 3 h**. There is
-no trend to design around, which is the practical argument for taking sleep accounting from
-`sleepWake` every day instead of choosing per run.
+Retention across seven consecutive runs: **14.4 h → 7.7 h → 35.6 h → 59.7 h → empty → 3 h →
+8.5 h**. There is no trend to design around, which is the practical argument for taking sleep
+accounting from `sleepWake` every day instead of choosing per run. On 2026-11-28 the 8.5 hours were
+enough for the best cross-check in the archive — **5 of 5** blocks matching to within 0.3 s — while
+still leaving the night, 65 % of the interval, outside the store's reach.
+
+### A boot epoch cannot drift
+
+`kern.boottime` was quoted as `1793971474` on 11-18 and `1793971475` on 11-19 and 11-26, then read
+`1793971472` on 11-28 — with uptime rising by exactly 1.0 d across every one of those runs and no
+reboot in any stream. A boot time cannot move three seconds without a restart, so the earlier
+figures were **derived** (`now - uptime`) rather than read from the register: an arithmetic result
+with the same number of digits looks exactly like a register read, and a 3-second error hides in a
+figure nobody checks. `sysctl -n kern.boottime` is the only correct source; convert it to a date
+with `date -r <sec>` rather than subtracting uptime.
 
 ### Your own probes land in the numbers
 
